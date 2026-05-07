@@ -1,4 +1,5 @@
 require("dotenv").config();
+let discordReady = false;
 
 const express = require("express");
 const cors = require("cors");
@@ -10,11 +11,6 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================
-// MEMORY STORAGE (IMPORTANTE)
-// ==========================
-const tasks = {};
-
-// ==========================
 // HEALTH CHECK
 // ==========================
 app.get("/", (req, res) => {
@@ -24,15 +20,50 @@ app.get("/", (req, res) => {
 // ==========================
 // GET TASKS (PARA LA EXTENSIÓN)
 // ==========================
-app.get("/get", (req, res) => {
-
+app.get("/get", async (req, res) => {
+    if (!discordReady) {
+  return res.status(503).json({ error: "Discord not ready yet" });
+}
   const { villageId } = req.query;
 
-  if (!villageId || !tasks[villageId]) {
-    return res.json({ content: "" });
+  if (!villageId) {
+    return res.status(400).json({ error: "missing villageId" });
   }
 
-  res.json(tasks[villageId]);
+  try {
+
+    const guild = client.guilds.cache.first();
+
+    if (!guild) {
+      return res.status(500).json({ error: "No guild found" });
+    }
+
+    // buscar canal por villageId
+    const channel = guild.channels.cache.find(c =>
+      c.name.startsWith(villageId + "-")
+    );
+
+    if (!channel) {
+      return res.json({ content: "" });
+    }
+
+    // leer último mensaje
+    const messages = await channel.messages.fetch({ limit: 1 });
+    const lastMessage = messages.first();
+
+    if (!lastMessage) {
+      return res.json({ content: "" });
+    }
+
+    return res.json({
+      villageId,
+      content: lastMessage.content
+    });
+
+  } catch (err) {
+    console.log("GET error:", err);
+    return res.status(500).json({ error: "internal error" });
+  }
 });
 
 // ==========================
@@ -41,13 +72,6 @@ app.get("/get", (req, res) => {
 app.post("/save", async (req, res) => {
 
   const { villageId, villageName, content } = req.body;
-
-  // guardar en memoria (PARA PODER LEER DESPUÉS)
-  tasks[villageId] = {
-    villageId,
-    villageName,
-    content
-  };
 
   const slug = villageName
     .toLowerCase()
@@ -81,13 +105,18 @@ app.post("/save", async (req, res) => {
 // DISCORD BOT
 // ==========================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 client.login(process.env.DISCORD_TOKEN);
 
 client.once("ready", () => {
   console.log("Discord bot listo");
+  discordReady = true;
 });
 
 // ==========================
